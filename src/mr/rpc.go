@@ -23,7 +23,13 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type Request struct {
 
+}
+
+type Response struct {
+	
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
