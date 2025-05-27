@@ -9,6 +9,7 @@ package mr
 import (
 	"os"
 	"strconv"
+	"time"
 )
 
 //
@@ -29,12 +30,16 @@ type TaskType int
 const (
 	MapTask    TaskType = iota // Map 阶段任务
 	ReduceTask                 // Reduce 阶段任务
+	WaittingTask               // 等待
+	NoTask                     // 所有任务结束
 )
 
 // Add your RPC definitions here.
 type Request struct {
 	TaskType TaskType
 	TaskID   int
+	TaskStatus TaskStatus
+	StartTime time.Time
 }
 
 type Task struct {
