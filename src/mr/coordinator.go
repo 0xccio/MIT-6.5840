@@ -50,7 +50,7 @@ type TaskCollection struct {
 func (tc *TaskCollection) AddTask(taskMeta *TaskMetaInfo) {
 	key := taskMeta.Task.TaskID
 	if _, exist := tc.MetaMap[key]; exist {
-		fmt.Printf("Task with ID %d already exists in the collection\n", key)
+		// fmt.Printf("Task with ID %d already exists in the collection\n", key)
 	} else {
 		tc.MetaMap[key] = taskMeta
 	}
@@ -61,17 +61,14 @@ func (tc *TaskCollection) GetTaskMetaInfo(taskId int) (*TaskMetaInfo, bool) {
 	return res, err
 }
 
-func (tc *TaskCollection) StartTask(taskId int) error {
+func (tc *TaskCollection) StartTask(taskId int) bool {
 	taskInfo, ok := tc.GetTaskMetaInfo(taskId)
-	if !ok {
-		return fmt.Errorf("task with ID %d not found", taskId)
-	}
-	if taskInfo.TaskStatus != Waiting {
-		return fmt.Errorf("cannot start task with ID %d: current status is %s, expected Waiting", taskId, taskInfo.TaskStatus)
+	if !ok || taskInfo.TaskStatus != Waiting {
+		return false
 	}
 	taskInfo.TaskStatus = Running
 	taskInfo.StartTime = time.Now()
-	return nil
+	return true
 }
 
 func (tc *TaskCollection) checkTaskDone() bool {
@@ -94,8 +91,8 @@ func (tc *TaskCollection) checkTaskDone() bool {
 			}
 		}
 	}
-	fmt.Printf("%d/%d map tasks are done, %d/%d reduce tasks are done\n",
-		mapDoneNum, mapDoneNum+mapUndoneNum, reduceDoneNum, reduceDoneNum+reduceUndoneNum)
+	// fmt.Printf("%d/%d map tasks are done, %d/%d reduce tasks are done\n",
+		// mapDoneNum, mapDoneNum+mapUndoneNum, reduceDoneNum, reduceDoneNum+reduceUndoneNum)
 
 	return (reduceDoneNum > 0 && reduceUndoneNum == 0) || (mapDoneNum > 0 && mapUndoneNum == 0)
 }
@@ -121,21 +118,41 @@ type Coordinator struct {
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) GetTask(req *Request, resp *Task) error {
-
+	
 	if c.Condition == MapPhase {
 		// Map任务没有全部完成，分配一个给worker
 		if len(c.MapTaskCh) > 0 {
 			task := <-c.MapTaskCh
 			*resp = *task
+			
+			if !c.MapTasks.StartTask(resp.TaskID) {
+				fmt.Printf("[duplicated job id]job %d is running\n", resp.TaskID)
+			}
+			
 		} else {
 			resp.TaskType = WaittingTask
 			if c.MapTasks.checkTaskDone() {
-				c.MapToReduce()
+				c.NextPhase()
 			}
 			return nil
 		}
 	} else if c.Condition == ReducePhase {
 		// TODO
+		if len(c.ReduceTaskCh) > 0 {
+			task := <-c.ReduceTaskCh
+			*resp = *task
+			
+			if !c.MapTasks.StartTask(resp.TaskID) {
+				fmt.Printf("[duplicated job id]job %d is running\n", resp.TaskID)
+			}
+			
+		} else {
+			resp.TaskType = WaittingTask
+			if c.MapTasks.checkTaskDone() {
+				c.NextPhase()
+			}
+			return nil
+		}
 	} else {
 		resp.TaskType = NoTask
 	}
@@ -144,6 +161,7 @@ func (c *Coordinator) GetTask(req *Request, resp *Task) error {
 }
 
 func (c *Coordinator) ReportTaskStatus(req *Request, resp *Task) error {
+	
 	if req.TaskType == MapTask {
 		if req.TaskStatus == Finished {
 			// Map任务完成
@@ -151,8 +169,8 @@ func (c *Coordinator) ReportTaskStatus(req *Request, resp *Task) error {
 			for _, v := range c.MapTasks.MetaMap {
 				if v.Task.TaskID == req.TaskID {
 					v.TaskStatus = Finished
-					c.MapTasks.muMap.Unlock()
-					return nil
+					// fmt.Printf("Map Task-%d has finished!\n", req.TaskID)
+					break
 				}
 			}
 			c.MapTasks.muMap.Unlock()
@@ -163,21 +181,46 @@ func (c *Coordinator) ReportTaskStatus(req *Request, resp *Task) error {
 				if v.Task.TaskID == req.TaskID && v.TaskStatus == Running {
 					c.MapTaskCh <- v.Task
 					v.TaskStatus = Waiting
-					c.MapTasks.muMap.Unlock()
-					return nil
+					// fmt.Printf("Map Task-%d failed, put it into channel again!", req.TaskID)
+					break
 				}
 			}
 			c.MapTasks.muMap.Unlock()
 		}
 	} else {
 		// TODO: Reduce Task
+		if req.TaskStatus == Finished {
+			// Reduce任务完成
+			c.MapTasks.muMap.Lock()
+			for _, v := range c.MapTasks.MetaMap {
+				if v.Task.TaskID == req.TaskID {
+					v.TaskStatus = Finished
+					// fmt.Printf("Reduce Task-%d has finished!\n", req.TaskID)
+					break
+				}
+			}
+			c.MapTasks.muMap.Unlock()
+		} else {
+			// Reduce任务失败
+			c.MapTasks.muMap.Lock()
+			for _, v := range c.MapTasks.MetaMap {
+				if v.Task.TaskID == req.TaskID && v.TaskStatus == Running {
+					c.ReduceTaskCh <- v.Task
+					v.TaskStatus = Waiting
+					// fmt.Printf("Reduce Task-%d failed, put it into channel again!", req.TaskID)
+					break
+				}
+			}
+			c.MapTasks.muMap.Unlock()
+		}
 	}
 	return nil
 }
 
-func (c *Coordinator) MapToReduce() {
+func (c *Coordinator) NextPhase() {
 	if c.Condition == MapPhase {
-		c.MapToReduce()
+		c.InitReduceTask()
+		// fmt.Println("All Map Task are finished, go ahead to Reduce Phase!")
 		c.Condition = ReducePhase
 	} else if c.Condition == ReducePhase {
 		c.Condition = AllDone
@@ -201,11 +244,37 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
 
 	// Your code here.
 
-	return ret
+	return c.Condition == AllDone
+}
+
+func (c *Coordinator) TimeoutHandler() {
+	for {
+		time.Sleep(time.Second)
+
+		c.MapTasks.muMap.Lock()
+		if c.Condition == AllDone {
+			c.MapTasks.muMap.Unlock()
+			return
+		}
+
+		for _, v := range c.MapTasks.MetaMap {
+			if v.TaskStatus == Running && time.Since(v.StartTime) > 10*time.Second {
+				// fmt.Println("detect a crash on Task ", v.Task.TaskID)
+				switch v.Task.TaskType {
+				case MapTask:
+					c.MapTaskCh <- v.Task
+					v.TaskStatus = Waiting
+				case ReduceTask:
+					c.ReduceTaskCh <- v.Task
+					v.TaskStatus = Waiting
+				}
+			}
+		}
+		c.MapTasks.muMap.Unlock()
+	}
 }
 
 // create a Coordinator.
@@ -219,12 +288,17 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		MapNum:       len(files),
 		GlobalTaskID: 0,
 		MapTasks: TaskCollection{
-			MetaMap: make(map[int]*TaskMetaInfo),
+			MetaMap: make(map[int]*TaskMetaInfo, len(files)+nReduce),
 		},
+		Condition: MapPhase,
 	}
 	// Your code here.
 	c.InitMapTask(files)
+
 	c.server()
+
+	go c.TimeoutHandler()
+
 	return &c
 }
 
@@ -232,7 +306,7 @@ func (c *Coordinator) InitMapTask(files []string) {
 	for _, v := range files {
 		id := c.generateTaskId()
 		// fmt.Printf("Task Id: %d\n", id)
-		task := Task{
+		taskTodo := Task{
 			TaskType:   MapTask,
 			FileName:   v,
 			TaskID:     id,
@@ -240,13 +314,35 @@ func (c *Coordinator) InitMapTask(files []string) {
 		}
 
 		taskMetaInfo := &TaskMetaInfo{
-			Task:       &task,
+			Task:       &taskTodo,
 			TaskStatus: Waiting,
 		}
 		c.MapTasks.AddTask(taskMetaInfo)
-		// fmt.Println("Initialize map task :", &task)
-		c.MapTaskCh <- &task
+		// fmt.Println("Initialize map task :", &taskTodo)
+		c.MapTaskCh <- &taskTodo
+		
 	}
+	// c.MapTasks.checkTaskDone()
+}
+
+func (c *Coordinator) InitReduceTask() {
+	for i := range c.ReducerNum {
+		id := c.generateTaskId()
+		taskTodo := Task{
+			TaskType: ReduceTask,
+			TaskID: id,
+			FileNames: MidFileAssign(i),
+		}
+
+		taskMetaInfo := &TaskMetaInfo{
+			Task:       &taskTodo,
+			TaskStatus: Waiting,
+		}
+		c.MapTasks.AddTask(taskMetaInfo)
+		// fmt.Println("Initialize reduce task :", &taskTodo)
+		c.ReduceTaskCh <- &taskTodo
+	}
+	// c.MapTasks.checkTaskDone()
 }
 
 func (c *Coordinator) generateTaskId() int {

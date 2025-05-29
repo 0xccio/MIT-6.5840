@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 )
 
 //
@@ -45,22 +46,36 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
+	alive := true
+
+
 	// Your worker implementation here.
-	for {
+	for alive {
 		task := CallForTask()
 
 		switch task.TaskType{
 		case MapTask:
-			fmt.Println("Start HandleMapTask")
-			err := HandleMapTask(task, mapf)
-			if err != nil {
-				log.Println("Worker: Map Task failed")
-			} else {
-				// TODO: 汇报Map任务执行状态
-			}
+			// fmt.Println("Start HandleMapTask")
+			HandleMapTask(task, mapf)
+			// fmt.Printf("Map task-%d is done, reporting status\n", task.TaskID)
+			SendTaskStatus(task)
 		case ReduceTask:
 			// TODO
+			if task.TaskID >= 8 {
+				// fmt.Println("Start HandleReduceTask")
+				HandleReduceTask(task, reducef)
+				SendTaskStatus(task)
+			}
+		case WaittingTask:
+			// TODO
+			// fmt.Println("GetTask is waiting")
+			time.Sleep(time.Second)
+		case NoTask:
+			time.Sleep(time.Second)
+			// fmt.Println("Worker terminated........")
+			alive = false
 		}
+		time.Sleep(time.Second)
 	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
@@ -68,6 +83,7 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 func HandleMapTask(task *Task, mapf func(string, string) []KeyValue) error {
+	// fmt.Printf("start handle Map Task-%d\n", task.TaskID)
 	file, err := os.Open(task.FileName)
 	if err != nil {
 		log.Fatalf("cannot open %v", task.FileName)
@@ -78,7 +94,9 @@ func HandleMapTask(task *Task, mapf func(string, string) []KeyValue) error {
 	}
 	file.Close()
 	midFile := mapf(task.FileName, string(content))
-	fmt.Println(midFile[0])
+
+	// fmt.Println(midFile[0])
+
 	sort.Sort(ByKey(midFile))
 	reduceNum := task.ReducerNum
 	HashedKV := make([][]KeyValue, reduceNum)
@@ -88,8 +106,8 @@ func HandleMapTask(task *Task, mapf func(string, string) []KeyValue) error {
 	}
 	for i := range reduceNum {
 		oname := "mr-mid-" + strconv.Itoa(task.TaskID) + "-" + strconv.Itoa(i)
-		folderPath := "/mnt/c/Users/17772957183/Desktop/ceg/博客/output/"
-		ofile, _ := os.Create(folderPath+oname)
+		// folderPath := "/mnt/c/Users/17772957183/Desktop/ceg/博客/output/"
+		ofile, _ := os.Create(oname)
 		enc := json.NewEncoder(ofile)
 		for _, kv := range HashedKV[i] {
 			enc.Encode(kv)
@@ -99,47 +117,65 @@ func HandleMapTask(task *Task, mapf func(string, string) []KeyValue) error {
 	return nil
 }
 
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
+func HandleReduceTask(task *Task, reducef func(string, []string) string) {
+	reduceFileNum := task.TaskID
+	intermediate := readFromLocalFile(task.FileNames)
+	sort.Sort(ByKey(intermediate))
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+	// 直接创建最终输出文件
+	oname := fmt.Sprintf("mr-out-%d", reduceFileNum)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		log.Fatalf("Failed to create output file %s: %v", oname, err)
+	}
+	defer ofile.Close()
 
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+		i = j
 	}
 }
 
 func CallForTask() *Task {
 	req := Request{}
-	req.TaskType = MapTask
 
 	resp := Task{}
-	ok := call("Coordinator.GetTask", &req, &resp)
+	call("Coordinator.GetTask", &req, &resp)
+	/*
 	if ok {
 		fmt.Printf("worker successfully get task: %s\n", resp.FileName)
 	} else {
 		fmt.Printf("worker get task failed\n")
 	}
+	*/
 	return &resp
+}
+
+func SendTaskStatus(task *Task) {
+	req := Request{
+		TaskType: task.TaskType,
+		TaskID: task.TaskID,
+		TaskStatus: Finished,
+	}
+	resp := Task{}
+	call("Coordinator.ReportTaskStatus", &req, &resp)
+	/*
+	if ok {
+		fmt.Printf("Worker successfully reported status of task %d as %s\n", task.TaskID, "Finished")
+	} else {
+		fmt.Printf("Worker failed to report status of task %d\n", task.TaskID)
+	}
+	*/
 }
 
 //
