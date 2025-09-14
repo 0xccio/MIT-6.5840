@@ -6,8 +6,11 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+	"time"
+)
 
 //
 // example to show how to declare the arguments
@@ -22,13 +25,29 @@ type ExampleReply struct {
 	Y int
 }
 
+type TaskType int
+
+const (
+	MapTask      TaskType = iota // Map 阶段任务
+	ReduceTask                   // Reduce 阶段任务
+	WaittingTask                 // 等待
+	NoTask                       // 所有任务结束
+)
+
 // Add your RPC definitions here.
 type Request struct {
-
+	TaskType   TaskType
+	TaskID     int
+	TaskStatus TaskStatus
+	StartTime  time.Time
 }
 
-type Response struct {
-	
+type Task struct {
+	TaskType   TaskType // 枚举类型，是 Map 任务还是 Reduce 任务
+	FileName   string   // Map任务需要处理的输入文件
+	FileNames  []string // Reduce任务需要处理的输入文件
+	TaskID     int      // 当前任务的id
+	ReducerNum int      // Reduce 总数，用于决定中间结果的划分数量（即 y 的范围）
 }
 
 // Cook up a unique-ish UNIX-domain socket name
