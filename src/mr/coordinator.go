@@ -58,7 +58,6 @@ func (tc *TaskCollection) AddTask(taskMeta *TaskMetaInfo) {
 
 func (tc *TaskCollection) GetTaskMetaInfo(taskId int) (*TaskMetaInfo, bool) {
 	fmt.Println("test rebase: 1 -> 2 from cc")
-	fmt.Println("test rebase: 1 -> 2 from ee")
 	res, err := tc.MetaMap[taskId]
 	return res, err
 }
