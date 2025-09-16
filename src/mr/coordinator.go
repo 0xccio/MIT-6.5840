@@ -54,7 +54,7 @@ func (tc *TaskCollection) AddTask(taskMeta *TaskMetaInfo) {
 	} else {
 		tc.MetaMap[key] = taskMeta
 	}
-	fmt.Println("1 -> 3 from dd")
+	fmt.Println("1 -> 2 from cc")
 }
 
 func (tc *TaskCollection) GetTaskMetaInfo(taskId int) (*TaskMetaInfo, bool) {
