@@ -60,6 +60,7 @@ func (tc *TaskCollection) AddTask(taskMeta *TaskMetaInfo) {
 func (tc *TaskCollection) GetTaskMetaInfo(taskId int) (*TaskMetaInfo, bool) {
 	fmt.Println("test rebase: 1 -> 3 from dd")
 	fmt.Println("test rebase: 1 -> 2 from cc")
+	fmt.Println("test rebase: 1 -> 2 from ee")
 	res, err := tc.MetaMap[taskId]
 	return res, err
 }
@@ -95,7 +96,7 @@ func (tc *TaskCollection) checkTaskDone() bool {
 		}
 	}
 	// fmt.Printf("%d/%d map tasks are done, %d/%d reduce tasks are done\n",
-		// mapDoneNum, mapDoneNum+mapUndoneNum, reduceDoneNum, reduceDoneNum+reduceUndoneNum)
+	// mapDoneNum, mapDoneNum+mapUndoneNum, reduceDoneNum, reduceDoneNum+reduceUndoneNum)
 
 	return (reduceDoneNum > 0 && reduceUndoneNum == 0) || (mapDoneNum > 0 && mapUndoneNum == 0)
 }
@@ -103,9 +104,9 @@ func (tc *TaskCollection) checkTaskDone() bool {
 type Condition int
 
 const (
-	MapPhase Condition = iota // Map阶段
-	ReducePhase               // Reduce阶段
-	AllDone                   // 全部完成
+	MapPhase    Condition = iota // Map阶段
+	ReducePhase                  // Reduce阶段
+	AllDone                      // 全部完成
 )
 
 type Coordinator struct {
@@ -121,17 +122,17 @@ type Coordinator struct {
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) GetTask(req *Request, resp *Task) error {
-	
+
 	if c.Condition == MapPhase {
 		// Map任务没有全部完成，分配一个给worker
 		if len(c.MapTaskCh) > 0 {
 			task := <-c.MapTaskCh
 			*resp = *task
-			
+
 			if !c.MapTasks.StartTask(resp.TaskID) {
 				fmt.Printf("[duplicated job id]job %d is running\n", resp.TaskID)
 			}
-			
+
 		} else {
 			resp.TaskType = WaittingTask
 			if c.MapTasks.checkTaskDone() {
@@ -144,11 +145,11 @@ func (c *Coordinator) GetTask(req *Request, resp *Task) error {
 		if len(c.ReduceTaskCh) > 0 {
 			task := <-c.ReduceTaskCh
 			*resp = *task
-			
+
 			if !c.MapTasks.StartTask(resp.TaskID) {
 				fmt.Printf("[duplicated job id]job %d is running\n", resp.TaskID)
 			}
-			
+
 		} else {
 			resp.TaskType = WaittingTask
 			if c.MapTasks.checkTaskDone() {
@@ -159,12 +160,12 @@ func (c *Coordinator) GetTask(req *Request, resp *Task) error {
 	} else {
 		resp.TaskType = NoTask
 	}
-	
+
 	return nil
 }
 
 func (c *Coordinator) ReportTaskStatus(req *Request, resp *Task) error {
-	
+
 	if req.TaskType == MapTask {
 		if req.TaskStatus == Finished {
 			// Map任务完成
@@ -323,7 +324,7 @@ func (c *Coordinator) InitMapTask(files []string) {
 		c.MapTasks.AddTask(taskMetaInfo)
 		// fmt.Println("Initialize map task :", &taskTodo)
 		c.MapTaskCh <- &taskTodo
-		
+
 	}
 	// c.MapTasks.checkTaskDone()
 }
@@ -332,8 +333,8 @@ func (c *Coordinator) InitReduceTask() {
 	for i := range c.ReducerNum {
 		id := c.generateTaskId()
 		taskTodo := Task{
-			TaskType: ReduceTask,
-			TaskID: id,
+			TaskType:  ReduceTask,
+			TaskID:    id,
 			FileNames: MidFileAssign(i),
 		}
 
